@@ -92,4 +92,26 @@ def update_user(user_id):
     db.session.commit()
     return jsonify({"message": f"Użytkownik {user.username} został zaktualizowany."}), 200
 
+#editing password
+@user_bp.route("/user/<int:user_id>/password", methods=["PATCH"])
+@jwt_required()
+def change_password(user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "Użytkownik nie znaleziony"}), 404
+
+    data = request.get_json()
+    if not data or not all(k in data for k in ["old_password", "new_password"]):
+        return jsonify({"error": "Brak wymaganych pól"}), 400
+
+    # Sprawdzamy, czy stare hasło jest poprawne
+    if not user.check_password(data["old_password"]):
+        return jsonify({"error": "Nieprawidłowe stare hasło"}), 401
+
+    # Zmieniamy hasło na nowe
+    user.set_password(data["new_password"])
+    db.session.commit()
+
+    return jsonify({"message": "Hasło zostało zmienione pomyślnie."}), 200
+
 
