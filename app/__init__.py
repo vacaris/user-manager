@@ -4,6 +4,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_bcrypt import Bcrypt
 from flask_jwt_extended import JWTManager
+from flask_cors import CORS
 
 db = SQLAlchemy()
 migrate = Migrate()
@@ -12,6 +13,7 @@ jwt = JWTManager()
 
 def create_app():
     app = Flask(__name__)
+    CORS(app)
 
     # path for database
     BASE_DIR = os.path.abspath(os.path.dirname(__file__))

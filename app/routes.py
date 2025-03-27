@@ -1,33 +1,33 @@
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from flask import Blueprint, request, jsonify
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from app import db
 from app.models import User
 
 user_bp = Blueprint("user_bp", __name__)
 
-# 🔹 register with hash
 @user_bp.route("/register", methods=["POST"])
+@jwt_required()
 def register():
     data = request.get_json()
-
     if not data or not all(k in data for k in ["username", "email", "password"]):
         return jsonify({"error": "Brak wymaganych pól"}), 400
 
     if User.query.filter_by(email=data["email"]).first():
         return jsonify({"error": "Email już istnieje"}), 400
 
-    new_user = User(
-        username=data["username"],
-        email=data["email"]
-    )
-    new_user.set_password(data["password"])  # Hashujemy hasło!
+    current_user = User.query.get(get_jwt_identity())
+    role = data.get("role", "user")
+
+    if role != "user" and current_user.role != "admin":
+        return jsonify({"error": "Tylko administrator może ustawiać rolę"}), 403
+
+    new_user = User(username=data["username"], email=data["email"], role=role)
+    new_user.set_password(data["password"])
 
     db.session.add(new_user)
     db.session.commit()
-
     return jsonify({"message": "Użytkownik zarejestrowany!"}), 201
 
-# 🔹 login with JWT
 @user_bp.route("/login", methods=["POST"])
 def login():
     data = request.get_json()
@@ -38,80 +38,75 @@ def login():
     if not user or not user.check_password(data["password"]):
         return jsonify({"error": "Nieprawidłowe dane"}), 401
 
-    # Tworzymy token JWT
     access_token = create_access_token(identity=str(user.id))
-    return jsonify({"token": access_token, "message": "Zalogowano pomyślnie"}), 200
+    return jsonify({"token": access_token}), 200
 
-# 🔹 getting users with JWT
+
 @user_bp.route("/users", methods=["GET"])
 @jwt_required()
 def get_users():
-    current_user = get_jwt_identity()  # Pobieramy ID użytkownika z tokena JWT
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+
+    if current_user.role != "admin":
+        return jsonify([{
+            "id": current_user.id,
+            "username": current_user.username,
+            "email": current_user.email,
+            "role": current_user.role
+        }])
+
     users = User.query.all()
-    return jsonify([{"id": u.id, "username": u.username, "email": u.email} for u in users])
+    return jsonify([
+        {
+            "id": u.id,
+            "username": u.username,
+            "email": u.email,
+            "role": u.role
+        } for u in users
+    ])
 
-# 🔹 getting specific user with JWT
-@user_bp.route("/user/<int:user_id>", methods=["GET"])
-@jwt_required()
-def get_user(user_id):
-    user = User.query.get(user_id)
-    if not user:
-        return jsonify({"error": "Użytkownik nie znaleziony"}), 404
-    return jsonify({"id": user.id, "username": user.username, "email": user.email})
-
-# deleting a user
 @user_bp.route("/user/<int:user_id>", methods=["DELETE"])
 @jwt_required()
 def delete_user(user_id):
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+
+    if current_user.role != "admin":
+        return jsonify({"error": "Brak uprawnień"}), 403
+
     user = User.query.get(user_id)
     if not user:
         return jsonify({"error": "Użytkownik nie znaleziony"}), 404
 
     db.session.delete(user)
     db.session.commit()
-    return jsonify({"message": f"Użytkownik {user.username} został usunięty."}), 200
+    return jsonify({"message": f"Użytkownik {user.username} usunięty."}), 200
 
-#editing a user
+
 @user_bp.route("/user/<int:user_id>", methods=["PUT"])
 @jwt_required()
 def update_user(user_id):
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+
+    if current_user.role != "admin" and current_user.id != user_id:
+        return jsonify({"error": "Brak uprawnień"}), 403
+
     user = User.query.get(user_id)
     if not user:
         return jsonify({"error": "Użytkownik nie znaleziony"}), 404
 
     data = request.get_json()
-    if not data:
-        return jsonify({"error": "Brak danych do edycji"}), 400
-
-    # Możemy zmienić tylko username i email
     if "username" in data:
         user.username = data["username"]
     if "email" in data:
         user.email = data["email"]
+    if "role" in data and current_user.role == "admin":  # tylko admin może zmienić rolę
+        user.role = data["role"]
+    if "password" in data and data["password"]:
+        user.set_password(data["password"])
 
     db.session.commit()
-    return jsonify({"message": f"Użytkownik {user.username} został zaktualizowany."}), 200
-
-#editing password
-@user_bp.route("/user/<int:user_id>/password", methods=["PATCH"])
-@jwt_required()
-def change_password(user_id):
-    user = User.query.get(user_id)
-    if not user:
-        return jsonify({"error": "Użytkownik nie znaleziony"}), 404
-
-    data = request.get_json()
-    if not data or not all(k in data for k in ["old_password", "new_password"]):
-        return jsonify({"error": "Brak wymaganych pól"}), 400
-
-    # Sprawdzamy, czy stare hasło jest poprawne
-    if not user.check_password(data["old_password"]):
-        return jsonify({"error": "Nieprawidłowe stare hasło"}), 401
-
-    # Zmieniamy hasło na nowe
-    user.set_password(data["new_password"])
-    db.session.commit()
-
-    return jsonify({"message": "Hasło zostało zmienione pomyślnie."}), 200
-
+    return jsonify({"message": "Użytkownik zaktualizowany."}), 200
 
